@@ -1,0 +1,99 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: CI - Build & Smoke Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build de la imagen Docker
+        run: docker build -t ollama-gateway:ci-test .
+
+      - name: Levantar el contenedor de prueba
+        run: |
+          docker run -d --name ci-test \
+            -e ENVIRONMENT=production \
+            -e ADMIN_TOKEN=ci-test-token-not-real \
+            -e DB_HOST=localhost \
+            -e DB_PORT=1433 \
+            -e DB_NAME=ci \
+            -e DB_USER=ci \
+            -e DB_PASSWORD=ci \
+            -p 8000:8000 \
+            ollama-gateway:ci-test
+
+      - name: Esperar y verificar que el contenedor sigue vivo
+        run: |
+          sleep 8
+          if [ "$(docker inspect -f '{{.State.Running}}' ci-test)" != "true" ]; then
+            echo "El contenedor murió al arrancar. Logs:"
+            docker logs ci-test
+            exit 1
+          fi
+          echo "El contenedor levantó y sigue corriendo. Logs:"
+          docker logs ci-test
+
+      - name: Limpiar
+        if: always()
+        run: docker rm -f ci-test || true
+
+  deploy:
+    name: CD - Deploy a la VPS
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Port knocking + Deploy a la VPS
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          echo "[+] Golpeando puertos para abrir acceso..."
+          for port in ${{ secrets.KNOCK_PORTS_OPEN }}; do
+            timeout 1 bash -c "echo > /dev/tcp/${{ secrets.VPS_HOST }}/$port" 2>/dev/null || true
+            sleep 0.15
+          done
+          echo "[+] Puerto 22 abierto temporalmente."
+          sleep 2
+
+          cat >> ~/.ssh/config <<EOF
+          Host vps
+            HostName ${{ secrets.VPS_HOST }}
+            User devop
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          EOF
+
+          echo "[+] Conectando por SSH y desplegando..."
+          ssh vps << 'ENDSSH'
+            set -e
+            cd /home/devop/idempotencia-ia
+
+            echo "Actualizando repositorio..."
+            git pull origin main
+
+            echo "Reconstruyendo contenedor..."
+            docker compose -f docker-compose.prod.yml down
+            docker compose -f docker-compose.prod.yml up -d --build
+
+            echo "Verificando salud del servicio..."
+            sleep 5
+            curl -sf http://127.0.0.1:8000/ready || echo "ADVERTENCIA: /ready no respondió OK"
+
+            echo "Despliegue completado."
+          ENDSSH
+
+          echo "[+] Cerrando puerto 22..."
+          for port in ${{ secrets.KNOCK_PORTS_CLOSE }}; do
+            timeout 1 bash -c "echo > /dev/tcp/${{ secrets.VPS_HOST }}/$port" 2>/dev/null || true
+            sleep 0.1
+          done
+          echo "[+] Puerto 22 cerrado."
