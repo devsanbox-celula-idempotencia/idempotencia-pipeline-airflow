@@ -7,8 +7,9 @@ x-airflow-common:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-meta/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
   volumes:
-    - ./dags:/opt/airflow/dags
+    - ../dags:/opt/airflow/dags
     - ./plugins:/opt/airflow/plugins
     - ./logs:/opt/airflow/logs
   depends_on:
@@ -32,6 +33,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    mem_limit: 256m
     restart: unless-stopped
 
   airflow-init:
@@ -51,7 +53,7 @@ services:
           --lastname admin \
           --role Admin \
           --email admin@example.com \
-          --password admin || true
+          --password "${AIRFLOW_ADMIN_PASSWORD}" || true
         echo "Init completado correctamente"
     restart: "no"
 
@@ -60,13 +62,15 @@ services:
       container_name: airflow_api_server
       command: api-server
       ports:
-        - "8080:8080"
+        # Solo Tailscale, nunca "8080:8080": Docker se salta ufw.
+        - "100.99.206.50:8080:8080"
       healthcheck:
         test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
         interval: 30s
         timeout: 10s
         retries: 5
         start_period: 30s
+      mem_limit: 512m
       restart: unless-stopped
       depends_on:
         <<: *airflow-common-depends-on
@@ -83,6 +87,7 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    mem_limit: 512m
     restart: unless-stopped
     depends_on:
       <<: *airflow-common-depends-on
@@ -93,6 +98,7 @@ services:
     <<: *airflow-common
     container_name: airflow_dag_processor
     command: dag-processor
+    mem_limit: 512m
     restart: unless-stopped
     depends_on:
       <<: *airflow-common-depends-on
