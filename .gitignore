@@ -1,0 +1,35 @@
+# =============================================================================
+# .gitignore — Archivos excluidos del control de versiones
+# =============================================================================
+
+# Credenciales — NUNCA subir al repositorio
+.env
+
+# Logs generados por Airflow en tiempo de ejecución
+logs/
+
+# Artefactos generados por dbt (compilados, resultados, documentación)
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+.docker/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+docs
