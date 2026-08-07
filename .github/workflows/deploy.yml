@@ -1,0 +1,70 @@
+name: CI/CD Airflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  ci:
+    name: CI - Validar compose
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validar sintaxis de docker-compose.yaml
+        run: docker compose -f docker-compose.yaml config --quiet
+
+  deploy:
+    name: CD - Deploy a la VPS
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Port knocking + Deploy a la VPS
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          echo "[+] Golpeando puertos para abrir acceso..."
+          for port in ${{ secrets.KNOCK_PORTS_OPEN }}; do
+            timeout 1 bash -c "echo > /dev/tcp/${{ secrets.VPS_HOST }}/$port" 2>/dev/null || true
+            sleep 0.15
+          done
+          echo "[+] Puerto 22 abierto temporalmente."
+          sleep 2
+
+          cat >> ~/.ssh/config <<EOF
+          Host vps
+            HostName ${{ secrets.VPS_HOST }}
+            User devop
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+          EOF
+
+          echo "[+] Conectando por SSH y desplegando..."
+          ssh vps << 'ENDSSH'
+            set -e
+            cd /home/devop/idempotencia-pipeline-airflow/airflow
+
+            echo "Actualizando repositorio..."
+            git pull --ff-only origin main
+
+            echo "Reconstruyendo servicios de Airflow..."
+            docker compose -f docker-compose.yaml up -d --force-recreate airflow-api-server airflow-scheduler airflow-dag-processor
+
+            echo "Verificando salud del api-server..."
+            sleep 10
+            curl -sf http://127.0.0.1:8080/api/v2/monitor/health || echo "ADVERTENCIA: /api/v2/monitor/health no respondió OK"
+
+            echo "Despliegue completado."
+          ENDSSH
+
+          echo "[+] Cerrando puerto 22..."
+          for port in ${{ secrets.KNOCK_PORTS_CLOSE }}; do
+            timeout 1 bash -c "echo > /dev/tcp/${{ secrets.VPS_HOST }}/$port" 2>/dev/null || true
+            sleep 0.1
+          done
+          echo "[+] Puerto 22 cerrado."
