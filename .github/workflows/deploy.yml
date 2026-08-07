@@ -13,6 +13,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Crear .env dummy para validación
+        run: |
+          cat > airflow/.env << 'EOF'
+          AIRFLOW_UID=50000
+          AIRFLOW_SECRET_KEY=ci-dummy-secret
+          AIRFLOW_ADMIN_PASSWORD=ci-dummy-password
+          EOF
+
       - name: Validar sintaxis de docker-compose.yaml
         run: docker compose -f airflow/docker-compose.yaml config --quiet
 
